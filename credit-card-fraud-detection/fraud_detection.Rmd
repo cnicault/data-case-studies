@@ -1,0 +1,475 @@
+---
+title: "Fraud_detection"
+author: "Christophe Nicault"
+date: "28 avril 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Exploratory data analysis
+
+```{r}
+library(tidyverse)
+library(scales)
+library(pROC)
+library(caret)
+library(e1071)
+library(ROSE)
+
+dir_path <- file.path("~","Perso", "R", "Analysis", "Fraud detection")
+file_path <- file.path(dir_path, "creditcard.csv")
+
+credcard <- read.csv(file_path)
+
+dim(credcard)
+glimpse(credcard)
+sum(is.na(credcard))
+```
+
+Most of the variables are the result of a PCA, therefore they are not easily interpretable directly. We can focus on the other variable, Class of course, Time and Amount.
+
+## Fraud vs non fraud
+
+```{r}
+credcard %>%
+  mutate(Class = as.factor(Class)) %>%
+  ggplot(aes(Class, fill = Class)) +
+  geom_bar() +
+  scale_y_continuous(labels = comma)
+```
+
+The data are higlhy imbalanced, let's find in which proportion
+
+```{r}
+prop.table(table(credcard$Class)) * 100
+```
+
+There are only 0,172% of observations classified as fraud, versus 99,827 % of non fraud.
+
+
+## Fraud distribution vs time
+
+The variable time indicate the number of second between the current transaction and the first transaction. We're looking for some patterns, so we need to zoom out, and group the data by hours.
+
+
+```{r}
+credcard$hours <- round(credcard$Time / 3600)
+credcard$hours24 <- credcard$hours %% 24
+
+credcard %>%
+  mutate(period = round(Time / 3600)) %>%
+  group_by(period) %>%
+  ggplot(aes(hours))+
+  geom_histogram(aes(y=..density.., fill = as.factor(Class), color = as.factor(Class)), alpha = 0.5, position = "identity") +
+  scale_fill_manual(values = c("lightblue", "pink"), labels = c("Legitimate", "Fraud"), name = "Fraud / Legitimate") +
+  scale_color_manual(values = c("blue", "red"), labels = c("Legitimate", "Fraud"), name = "Fraud / Legitimate") +
+  facet_wrap(~Class) +
+  labs(title = "Fraud / Legitimate transaction repartition per hour") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+credcard %>%
+  mutate(period = round(Time / 3600)) %>%
+  group_by(period) %>%
+  ggplot(aes(hours))+
+  geom_histogram(aes(y=..density.., fill = as.factor(Class), color = as.factor(Class)), alpha = 0.5, position = "identity") +
+  scale_fill_manual(values = c("lightblue", "pink"), labels = c("Legitimate", "Fraud"), name = "Fraud / Legitimate") +
+  scale_color_manual(values = c("blue", "red"), labels = c("Legitimate", "Fraud"), name = "Fraud / Legitimate") +
+  labs(title = "Fraud / Legitimate transaction repartition per hour") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+We can visualise a pattern for the legitimate transaction, corresponding basically at night and day. The distribution of the fraudulant transaction has no clear pattern. 
+
+
+```{r}
+credcard %>%
+  filter(Class == 0) %>%
+  ggplot(aes(x = hours24)) +
+  geom_histogram(aes(y = ..density..),breaks = seq(0, 24), colour = "blue", fill = "lightblue") + 
+  coord_polar() +
+  scale_x_continuous("", limits = c(0, 24), breaks = seq(0, 24))
+```
+
+
+The pattern for legitimate transaction is clear when looking at the distribution with polar coordinates.
+
+```{r}
+credcard %>%
+  filter(Class == 1) %>%
+  ggplot(aes(hours24)) +
+  geom_histogram(aes(y = ..density..),breaks = seq(0, 24), colour = "red", fill = "pink") + 
+  coord_polar() +
+  scale_x_continuous("", limits = c(0, 24), breaks = seq(0, 24))
+
+
+credcard %>%
+  ggplot(aes(hours24))+
+  geom_histogram(aes(y = ..density.., fill = as.factor(Class), color = as.factor(Class)), alpha = 0.4, breaks = seq(0, 24), position = "identity") + 
+  coord_polar() +
+  scale_x_continuous("", limits = c(0, 24), breaks = seq(0, 24)) + 
+  scale_fill_manual(values = c("lightblue", "pink"), labels = c("Legitimate", "Fraud"), name = "Fraud / Legitimate") +
+  scale_color_manual(values = c("blue", "red"), labels = c("Legitimate", "Fraud"), name = "Fraud / Legitimate") +
+  labs(title = "Fraud / Legitimate transaction repartition per hour") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+The graph shows the total number of transaction per hour (in blue), and the number of fraud transaction per hour (in red), both scaled to fit on the same graph, for each hour.
+Of course, the number of the legitimate transaction is always far greater than the fraud, the purpose of the graph is not to compare fraud versus total transaction, but to detect a pattern in time.
+We can see that :
+- there is a decreased in the volume of transaction from 0 to 7 hours, which repeat the next day at the same time (24, 48). 
+- there is an increased of the proportion of fraud from 2 to 7, with a similar pattern the next day (26 to 31)
+
+
+
+## Amount
+
+Benford 
+
+```{r}
+library(benford.analysis)
+
+amount.ben <- credcard %>% filter(Class == 1) %>% select(Amount)
+amount.ben.ana <- benford(as_vector(amount.ben), number.of.digits = 1)
+plot(amount.ben.ana, except = c("second order", "summation", "mantissa", "chi squared","abs diff", "ex summation", "Legend"), multiple = F) 
+
+
+amount.ben <- credcard %>% filter(Class == 0) %>% select(Amount)
+amount.ben.ana <- benford(as_vector(amount.ben), number.of.digits = 1)
+plot(amount.ben.ana, except = c("second order", "summation", "mantissa", "chi squared","abs diff", "ex summation", "Legend"), multiple = F) 
+
+amount.ben <- credcard %>% select(Amount)
+amount.ben.ana <- benford(as_vector(amount.ben), number.of.digits = 1)
+plot(amount.ben.ana, except = c("second order", "summation", "mantissa", "chi squared","abs diff", "ex summation", "Legend"), multiple = F) 
+
+```
+
+We can see that the fraud transaction doesn't stick to benford law, some digits are over represented (1, 7 and 9) while the other are under represented. The plot for the amount of the legitimate transactions is more what we expect.
+
+It is interesting to notice, but it is difficult to expect to extract a feature that could improve a detection model, due to the imbalanced of the data. The fraudlent class is too low, it doesn't impact the general distribution of the amount within both class.
+
+
+What the maximum Amount for each Class
+
+```{r}
+credcard %>%
+  dplyr::select(Amount, Class) %>% 
+  group_by(Class) %>%
+  summarize(max(Amount))
+```
+
+What is the distribution of the Amount transaction for each Class, limited  to Amount < 2500 for better readibility
+
+```{r}
+credcard %>%
+  dplyr::filter(Amount < 2500) %>%
+  ggplot(aes(Amount)) +
+  facet_wrap(~Class, scales = "free") +
+  geom_histogram(aes(fill=factor(Class)), bins = 50) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(labels = dollar_format()) +
+  labs(title = "Histogram of Amount of transaction per Class",
+       subtitle = "Positive = 1, free scale for y axis",
+       x = "Amount of transaction",
+       y = "Number of transactions")
+
+```
+
+
+The distribution of the Amount looks alike for each Class. There is no significant information that can help us building a better model.
+
+
+# Building a first model
+
+## Logistic regression model
+
+We know already that the data are highly imbalanced, so it will be difficult for a regression model to perform well with only 0.17% of fraud. But as a reference for further improvment we build a basic logistic regression model
+
+
+```{r}
+
+rows<-sample(nrow(credcard))
+removedcol <- which(names(credcard) %in% c("Time", "hours"))
+credcard_shuffled <- credcard[rows, -removedcol]
+
+cred_scale <- as.data.frame(scale(credcard_shuffled))
+cred_scale$Class <- credcard_shuffled$Class
+
+split <-round(nrow(cred_scale)*0.7)
+traindf <- cred_scale[1:split,]
+testdf <- cred_scale[split:nrow(cred_scale),]
+
+prop.table(table(traindf$Class)) * 100
+prop.table(table(testdf$Class)) * 100
+
+#save the splitted date in case of messing up
+ref_traindf <- traindf
+ref_testdf <- testdf
+
+credcard_modglm <- glm(Class ~ ., data = traindf, family = "binomial")
+
+```
+
+We measure the usual metrics and discuss whether they apply for this case with imbalanced data
+
+```{r}
+
+credcard_prob <- predict(credcard_modglm, testdf, type = "response")
+
+ROC <- roc(testdf$Class, credcard_prob)
+
+plot(ROC)
+
+auc(ROC)
+
+result <- testdf
+result$prob <- credcard_prob
+result$pred <- ifelse(result$prob > 0.50,1,0)
+
+mean(result$pred == result$Class)
+
+```
+
+The roc curve looks good, the AUC is 0.9886 which is good, and even better, the model is 99.92 % right !
+OF course, this is too good to be true, even if the model was predicting always the Class 0, it would be 99.82% accurate as the data are imbalanced
+
+```{r}
+mean(result$Class == 0)
+```
+
+These metrics here are not very usefull. We need to know is how many good and bad predictions we made.
+We will use the confusion matrix, and the precision and recall.
+
+The precision is the proportion of positive identification that were correct
+The recall is the proportion of the positive class that were correctly identify
+
+```{r}
+# With a function
+
+confMatrixPlot <- function(prediction, reference){
+  
+  confMatrix <- confusionMatrix(as.factor(prediction), as.factor(reference), mode = "prec_recall")
+  
+  confmat <- as.data.frame(confMatrix$table)
+  confmat$label <- c("TN", "FP", "FN", "TP")
+  
+  confmat %>%
+  mutate(indic = abs(as.numeric(Prediction) - as.numeric(Reference)))  %>%
+  ggplot(aes(Reference, Prediction,fill = as.factor(indic))) +
+    geom_tile() +
+    geom_text(aes(label = paste0(label, " : ", Freq))) +
+    scale_fill_manual(values = c('#46c4a6','#ff9845')) +
+    theme(legend.position = "none",
+          plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5)) + 
+    labs(title = "Confusion Matrix",
+         subtitle = "Positive = 1")
+  
+}
+
+confMatrixPlot(result$pred, result$Class)
+
+cf_glm <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+cf_glm
+
+```
+
+The recall is `r cf_glm$byClass['Recall']` and the the precision is `r cf_glm$byClass['Precision']`
+
+The confusion Matrix shows that the model identified correctly `r cf_glm$table[2,2]` fraud on `r cf_glm$table[2,2] + cf_glm$table[1,2]`  fraud present in the test dataet.
+It identify as legitimate 49 fraud transaction.
+The recall is `r cf_glm$byClass['Recall']`  (number of fraud correctly identified / number of total fraud) <=> (TP / (TP + FN))
+The identified `r cf_glm$table[2,2] + cf_glm$table[2,1]` transaction as fraud, `r cf_glm$table[2,2]` were fraud and`r cf_glm$table[2,1]` were false positive.
+the precision is `r cf_glm$byClass['Precision']` (number of correctly identified / number of fraud identified) <=> (TP / TP + FP)
+
+Let's visualise on some dimension where are located the False negatives
+
+```{r}
+FN <- which(result$Class == 1 & result$pred == 0)
+result$FN <- 0
+result$FN[FN] <- 1
+
+result %>%
+  ggplot(aes(V1, V2, color = as.factor(FN), shape = as.factor(Class))) +
+  geom_point(alpha = 0.2)
+
+result %>%
+  ggplot(aes(V13, V12, color = as.factor(FN), shape = as.factor(Class))) +
+  geom_point(alpha = 0.2)
+```
+
+
+Can we improve the model by selecting differently the features ? 
+
+```{r}
+traindf <- cred_scale[1:split,]
+testdf <- cred_scale[split:nrow(cred_scale),]
+
+prop.table(table(traindf$Class)) * 100
+prop.table(table(testdf$Class)) * 100
+
+selectedcol <- which(names(traindf) %in% c("Class", "V10", "V14", "V12", "V13"))
+
+credcard_mod <- glm(Class ~ ., data = traindf[, selectedcol], family = "binomial")
+
+credcard_prob <- predict(credcard_mod, testdf, type = "response")
+
+result <- testdf
+result$prob <- credcard_prob
+result$pred <- ifelse(result$prob > 0.50,1,0)
+
+confMatrixPlot(result$pred, result$Class)
+
+confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+```
+
+Don't use that in the final analysis
+
+
+## Random Forest
+
+```{r}
+library(randomForest)
+
+trainrf <- traindf
+trainrf$Class <- as.factor(trainrf$Class)
+mod_rf <- randomForest(Class ~ ., trainrf, ntree = 500)
+
+pred <-  predict(mod_rf, testdf)
+
+result <- testdf
+result$pred <- pred
+
+confMatrixPlot(result$pred, result$Class)
+cf_rf <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+cf_rf
+
+```
+
+
+The recall is `r cf_rf$byClass['Recall']` and the the precision is `r cf_rf$byClass['Precision']`
+
+
+# Using over and under sampling
+
+```{r}
+sampling <- ovun.sample(Class ~ ., data = traindf, method = "both", N = nrow(traindf), p = 0.3)
+
+ovun_sampling <-sampling$data 
+prop.table(table(ovun_sampling$Class))
+```
+
+## Logistic Regression
+
+```{r}
+mod_glm.ovun <- glm(Class ~ ., data = ovun_sampling, family = "binomial")
+
+library(car)
+
+vif(credcard_mod)
+
+removedcol <- which(names(ovun_sampling) %in% c("V1", "V2","V3", "V19", "V20", "V7", "V23", "V17", "Amount"))
+selcol <- which(names(ovun_sampling) %in% c("V1", "V4", "V5", "V8", "V10", "12", "Class"))
+
+mod_glm.ovun <- glm(Class ~ ., data = ovun_sampling[, selcol], family = "binomial", control=glm.control(maxit=50))
+
+credcard_prob <- predict(mod_glm.ovun, testdf, type = "response")
+
+result <- testdf
+result$prob <- credcard_prob
+result$pred <- ifelse(result$prob > 0.50,1,0)
+
+confMatrixPlot(result$pred, result$Class)
+
+cf_glm.ovun <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+cf_glm.ovun
+```
+
+The recall is `r cf_glm.ovun$byClass['Recall']` and the the precision is `r cf_glm.ovun$byClass['Precision']`
+
+## Random Forest
+
+Random Forest
+
+```{r}
+library(randomForest)
+
+ovun_sampling$Class <- as.factor(ovun_sampling$Class)
+mod_rf.ovun <- randomForest(Class ~ ., ovun_sampling, ntree = 500)
+
+pred <-  predict(mod_rf.ovun, testdf)
+
+result <- testdf
+result$pred <- pred
+
+confMatrixPlot(result$pred, result$Class)
+cf_rf.ovun <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+cf_rf.ovun
+
+```
+
+The recall is `r cf_rf.ovun$byClass['Recall']` and the the precision is `r cf_rf.ovun$byClass['Precision']`
+
+# Using SMOTE
+
+```{r}
+library(smotefamily)
+
+
+n0 <- nrow(traindf[traindf$Class == 0,]); n1 <- nrow(traindf[traindf$Class == 1,]); r0 <- 0.6
+
+# Calculate the value for the dup_size parameter of SMOTE
+ntimes <- ((1 - r0) / r0) * (n0 / n1) - 1
+
+smote_output <- SMOTE(X = traindf, target = traindf$Class, K = 5, dup_size = ntimes)
+
+smote_sampling <- smote_output$data
+```
+
+## Logistic Regression
+
+```{r}
+mod_glm.smote <- glm(Class ~ V2 + V12 + V13 + V10 + V11 + V7 +  hours24, data = smote_sampling, family = "binomial", control=glm.control(maxit=50))
+
+credcard_prob <- predict(mod_glm.smote, testdf, type = "response")
+
+result <- testdf
+result$prob <- credcard_prob
+result$pred <- ifelse(result$prob > 0.50,1,0)
+
+confMatrixPlot(result$pred, result$Class)
+
+cf_glm.smote <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+cf_glm.smote
+```
+
+The recall is `r cf_glm.smote$byClass['Recall']` and the the precision is `r cf_glm.smote$byClass['Precision']`
+
+## Random Forest
+
+```{r}
+library(randomForest)
+
+smote_sampling$Class <- rev(as.factor(rev(smote_sampling$Class)))
+mod_rf.smote <- randomForest(Class ~ ., smote_sampling[,-32], ntree = 500)
+
+pred <- predict(mod_rf.smote, testdf)
+
+result <- testdf
+result$pred <- pred
+
+confMatrixPlot(result$pred, result$Class)
+cf_rf.smote <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+
+cf_rf.smote
+
+```
+
+The recall is `r cf_glm.smote$byClass['Recall']` and the the precision is `r cf_glm.smote$byClass['Precision']`
+
