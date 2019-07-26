@@ -3,18 +3,21 @@ title: "National Footprint Accounts 2018"
 author: "Christophe Nicault"
 date: "28/06/2019"
 output:
-  word_document
+  html_document:
+    toc: TRUE
+    number_sections: TRUE
 
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Study
 
-I will use the data to analyse the evolution over the last 50 years of the biocapacity and the ecological footprint, for the world, at a region level, and look in some countries with the higher changing rate.
-I will then analyse the data for the year 2014 to draw a picture of the situation for that particular year (last year with the data provided), with the main contributors or debtors, and make maps for the biocapacity and footprint per capita, overall, and with contributors and debtors.
+This is an analysis of the evolution of the world's biocapacity and ecological footprint. The data will be reviewed worldwide, by region, and with a deeper dive into countries with the highest rates of change.
+The data for the year 2014 will then be analysed to illustrate countries with the largest ecological footprint or with the largest biocapacity, and the difference between ecological footprint and biocapacity.
+Note: I will design as "contributor" countries with a higher biocapacity than footprint, and as "debtor" countries with a higher footprint than biocapacity.
 
 
 # Understanding the data and missing values
@@ -22,14 +25,15 @@ I will then analyse the data for the year 2014 to draw a picture of the situatio
 ```{r include=FALSE}
 library(here)
 library(tidyverse)
+theme_update(plot.title = element_text(hjust = 0.5),
+             plot.subtitle = element_text(hjust = 0.5))
 ```
 
-## first contact
+
+## First contact
 
 ```{r}
 path <- file.path(here::here("national-footprint-accounts-2018", "NFA 2018.csv"))
-#path <- file.path(here::here("analysis", "NFA 2018.csv"))
-#path <- file.path(here::here("NFA 2018.csv"))
 nfa <- read_csv(path)
 
 dim(nfa)
@@ -39,8 +43,8 @@ sum(is.na(nfa))
 range(nfa$year)
 
 sapply(lapply(nfa[,names(nfa)],is.na),sum)
-
 ```
+
 
 ```{r}
 nfa <- nfa %>%
@@ -50,16 +54,16 @@ nfa <- nfa %>%
 
 ## Study the NAs
 
-There are many NAs, we need to look into them to understand how they can impact the analysis.
+There are many NAs; we need to look into them to understand how they can impact the analysis.
 
-There are 23490 observations with no detail (crop_land, grazing_lang etc.) but the total is always provided.
+There are 23490 observations with no detail (crop_land, grazing_lang, etc.) but the total is always provided.
 We will be able to analyse the total footprint and biocapacity per country, but we need to be careful if we go to the detail of the type of land.
 
 Let's understand which country have missing values, and for which period.
 
 ```{r}
 nfa_na <- nfa %>% 
-  filter(is.na(crop_land) & is.na(grazing_land) & is.na(forest_land)) %>%
+  filter(is.na(crop_land) | is.na(grazing_land) | is.na(forest_land) | is.na(fishing_ground) | is.na(built_up_land)) %>%
   group_by(UN_region, country) %>%
   summarize(begin = min(year),
             end = max(year))
@@ -75,19 +79,20 @@ nfa_na %>%
    title = "Period with missing data for the type of land",
    subtitle = "(other data are provided)")   
 
-# Note : I can't reorder with 2 factors, so I concatenate them before, and reorder the country with this variable to order by UN_region
+# Note: I can't reorder with 2 factors, so I concatenate them before, and reorder the country with this variable to order by UN_region
 ```
 
-We are missing the details on a large period of time and for many countries, and among big countries that would have an impact (USSR).
-Therefore, it won't be accurate to analyse the history for the type of land.
+We are missing the details on a large period and for many countries, and among big countries that would have an impact (USSR).
+Therefore, it won't be accurate to analyse the history for the type of land, even though we can look at the trend.
+
 
 ## Time range
 
-This sort of graph can be interesting as well for the rest of the data. Even if there are no missing values for other country, this graph can help visualising if these countries have data for the full period(1961 - 2014). We select only the countries who don't have data starting from 1961.
+Even if there are no missing values for other countries, the same kind of graph than above can help to visualise if these countries have data for the full period (1961 - 2014). We select only the countries who don't have data starting from 1961 or ending in 2014.
 
 ```{r}
 nfa_no_data <-nfa %>% 
-  filter(!is.na(crop_land)) %>%
+  filter(!is.na(crop_land) & !is.na(grazing_land) & !is.na(forest_land) & !is.na(fishing_ground) & !is.na(built_up_land)) %>%
   group_by(UN_region, country) %>%
   summarize(begin = min(year),
             end = max(year))
@@ -108,11 +113,10 @@ nfa_no_data %>%
 
 ```
 
-Many countries have a long period without data at all. It is particularly true for Africa, Asia and Europe. Looking at the graph, we can guess that an analysis of the history won't be accurate, so we can visualise the trend, keeping in mind that the real numbers are not probably impacted by the lack of data.
-But maybe we need to check if it can't be explained by the geopolitics. For example, we can guess that for Europe, USSR has split in the 90s in Russia, Ukraine, etc...
+Many countries have a long period without data at all. It is particularly true for Africa, Asia and Europe. Looking at the graph, we can guess that an analysis of the history won't be accurate, so we can visualise the trend, keeping in mind that the lack of data probably impacts the real numbers.
+We can also introduce some external knowledge and information about the changing in geopolitics. In Europe, USSR has split in the 90s in Russia, Ukraine, etc. We can analyse this a bit further to understand the impact of the data that appear to be missing in the following visualisation.
 
-**Europe**
-
+* **Europe**
 ```{r}
 
 no_data <- function(df, region){
@@ -135,45 +139,44 @@ nfa %>% no_data("Europe")
 
 ```
 
-The graph tells us that Yugoslavia and USSR stopped in 1991 and all the countries which start in 1991 come from the separation of these two countries. So for Europe, an analysis from 1961 to 2014 would be complete, except for few years for Ireland, and a gap of a year between the end of Czechoslovakia and the data for Slovaka and Czech Republic.
+It is clear that the changes in 1991 are due to the dissolution of Yugoslavia and USSR. All the countries which start in 1991 come from the separation of these two countries. So for Europe, analysis from 1961 to 2014 would be complete, except for few years for Ireland, and a gap of a year between the end of Czechoslovakia and the data for Slovakia and the Czech Republic.
 
-**Africa**
+* **Africa**
 ```{r}
 
 nfa %>% no_data("Africa")
 
 ```
 
-For Africa, Ethiopia PDR is split in Ethiopia and Eritrea, and Sudan (former) split between Sudan and South Sudan.
-Guinea Bissau was independent in 1973, so the question is, was the information accounted with portuguese data or were they not collected ?
-The few missing years for these country which are not consumming a lot won't impact much the overall analysis for the continent accross the 53 years.
+For Africa, the data for Ethiopia PDR are split in Ethiopia and Eritrea, and the data for Sudan (former) are split between Sudan and South Sudan.
+Guinea Bissau was independent in 1973, so the question is, was the information accounted with Portuguese data or were they not collected?
+There are still a few countries with missing years, this can impact the accuracy for Africa, but we can still analyse the trend.
 
-**Asia**
+* **Asia**
 ```{r}
 
 nfa %>% no_data("Asia")
 
 ```
 
+Part of the missing data is due to countries coming from USSR, so their impact must have been accounted for USSR for the missing period.
+The data for the countries in the Persian Gulf are missing until the beginning of the 80s, and the data for Saudi Arabia are completely missing except for 2014.
 
-Part of the missing data are due to countries coming from USSR, so there impact must have been accounted in USSR for the missing period.
-The data for the countries in the Persian Gulf are missing until the begining of the 80s, and the data for Saudi Arabia are completely missing except for 2014.
-
-**Oceania**
+* **Oceania**
 ```{r}
 
 nfa %>% no_data("Oceania")
 
 ```
 
-**North America**
+* **North America**
 ```{r}
 
 nfa %>% no_data("North America")
 
 ```
 
-**Latin America and the Caribbean**
+* **Latin America and the Caribbean**
 ```{r}
 
 nfa %>% no_data("Latin America and the Caribbean")
@@ -183,7 +186,7 @@ nfa %>% no_data("Latin America and the Caribbean")
 
 ## Last available year
 
-To get a picture of the present situation, we will focus on the last year of data, but we need to see if some countries have a end date before 2014.
+To get a picture of the present situation, we will focus on the last year of data, but we need to see if some countries have an end date before 2014.
 
 ```{r}
 nfa %>%
@@ -193,8 +196,8 @@ nfa %>%
 
 ```
 
-All the countries listed are countries that have splited into other countries, as the previous graph showed, except for New Zealand.
-Surprisingly, the data are missing for year 2014, the last year with data provided is 2013. We have two choices to deal with that, either we build a model to predict the values for the year 2014, or we use the number of 2013 for the year 2014, assuming that they would be close.
+All the countries listed are countries that have split into other countries, as the previous graph showed, except for New Zealand.
+Surprisingly, the data are missing for the year 2014, the last year with data provided is 2013. We have two choices to deal with that, either we build a model to predict the values for the year 2014, or we use the number of 2013 for the year 2014, assuming that they would be close.
 
 ```{r}
 nfa %>%
@@ -202,12 +205,16 @@ nfa %>%
   ggplot(aes(year, total)) + 
   geom_line() +
   geom_smooth() +
-  facet_wrap(~record, scales = "free")
+  facet_wrap(~record, scales = "free") +
+  labs(title = "Evolution from 1961 to 2013 for New Zealand",
+       subtitle = "Free scale for each graph",
+       x = "Year",
+       y = "Total (GHA)")
 ```
 
-We can see that there is a change around 2000 which a big decrease of biocapacity since, and a relative stability for the total consumption. We could build up the missing data by prolonging the decrease linearly for one more year for the biocapacity and use the mean of the last 13 years for the total consumption. But there are 8 variables to build up, and the goal of the analysis is not a focus on New Zealand, I choose the lazy way and assume that the inaccuracy for that year for New Zealand won't change the global analysis for the world or even for Oceania.
+We can see that there is a change around 2000 with a big decrease of biocapacity since, and relative stability for the total consumption. We could build up the missing data by prolonging the decrease linearly for one more year for the biocapacity and use the mean of the last 13 years for the total consumption. But there are eight variables to build up, and the goal of the analysis is not a focus on New Zealand. Therefore I choose to report the number of the year 2013, assuming that the inaccuracy for that year for New Zealand won't change the global analysis for the world or even for Oceania.
 
-For the analysis of the current situation I will therefore use the year 2014 for every country and report the number of 2013 for New Zealand.
+For the analysis of the current situation, I will use the year 2014 for every country and report the number of 2013 for New Zealand.
 
 ```{r}
 nfa2014 <- nfa %>%
@@ -222,7 +229,7 @@ nfa2014 <- rbind(nfa2014, NZ)
 ```
 
 
-## check for NAs for 2014
+## Check for NAs for 2014
 
 There are 23 countries with no data for the detail in 2014.
 ```{r}
@@ -233,7 +240,6 @@ nfa2014 %>%
   select(country) %>% 
   distinct()
 
-
 ```
 
 ```{r}
@@ -243,22 +249,22 @@ nfa2014 %>%
   distinct()
 ```
 
-There are 14 countries with no information for the GDP per Capita, we can ignore them or carry out further investigations.
+There are 14 countries with no information for the GDP per Capita; we can ignore them or carry out further investigations.
 
 The data about GDP for 2014 in 2010 USD can be found at this address :
 https://data.worldbank.org/indicator/NY.GDP.PCAP.KD
 
 
 ```{r}
-path <- file.path("~","Perso","R","analysis", "API_NY.GDP.PCAP.KD_DS2_fr_csv_v2_11733.csv")
+path <- file.path(here::here("national-footprint-accounts-2018", "API_NY.GDP.PCAP.KD_DS2_fr_csv_v2_11733.csv"))
 gdp_per_cap <- read_csv(path, skip = 4)
 
 gdp2014 <- gdp_per_cap %>%
   select(`Country Name`, `Country Code`,`2014`)
 ```
 
-Lets see if there are differencies between the GDP in our data and the GDP in the world bank data. We will limit the 
-request to differencies above 5 %
+Let's see if there are differences between the GDP in our data and the GDP in the world bank data. We will limit the 
+request to differences above 5 %
 
 ```{r}
 nfa_gdp <- nfa2014 %>%
@@ -273,7 +279,7 @@ nfa_gdp %>%
 
 The differences in percentage for these 3 countries are highs, but the amounts are not very high considering that this issue concern small countries, it won't impact much the analysis at a continent or world level. 
 
-Let see which missing values can be found in these data.
+Let see which missing values we can find in these data.
 
 ```{r}
 nfa_gdp %>%
@@ -296,13 +302,14 @@ nfa_gdp %>%
   distinct()
 ```
 
-The missing values for theses countries can be explain by the political situation (Eritra, North Korea), the War (Syria, Somalia).
-French Polynesia, Guadeloupe, Martinique & Réunin are french territories, and we can guess that there data are part of the french GDP. 
+The missing values for theses countries might find an explanation in the political situation (Eritrea, North Korea), the War (Syria, Somalia).
+French Polynesia, Guadeloupe, Martinique & Reunion are french territories, maybe their data are part of the French GDP. 
 
-We will continue the analysis with theses missing values.
+We will continue the analysis with these missing values.
 
 
 # Evolution for the world between 1961 and 2014
+
 
 ## Total biocapacity &  consumption
 
@@ -320,8 +327,9 @@ nfa %>%
 ```
 
 At the scale of the world, both the biocapacity and the consumption are growing. But we can see that :
-- since 1970, the consumption is above the biocapacity
-- the increase rate of the consumption is far greater than for the biocapacity
+
+* since 1970, the consumption is above the biocapacity
+* the increase rate of the consumption is far greater than for the biocapacity
 
 ```{r}
 nfa %>%
@@ -334,8 +342,9 @@ nfa %>%
 
 ```
 
-Note : we could also use a linear model to get the rate which a better accuracy, which will require more steps. We are mainly interested here in the magnitude.
-The total consomption is growing 5.2 faster than the biocapacity.
+Note: we could also use a linear model to get the rate which a better accuracy, which will require more steps. We are mainly interested here in the magnitude.
+The total consumption is growing 5.2 faster than the biocapacity.
+
 
 ## Biocapacity & consumption per capita
 
@@ -352,8 +361,8 @@ nfa %>%
 ```
 
 The consumption per capita has increased from 1961 to 2014, at a moderate rate, with ups and downs ( a local maximum in the 70s and a local minimum in the 90s).
-The Biocapacity per capita has dramatically reduce, even though as seen on the previous graph, the total biocapacity increased. This could be imputed to the increase of population.
-The consumption per capita is above the consumption per capita since 1971.
+The Biocapacity per capita has dramatically reduced, even though, as seen in the previous graph, the total biocapacity increased. This could be imputed to the increase of population.
+The consumption per capita is above the biocapacity per capita since 1971.
 
 ```{r}
 nfa %>%
@@ -377,11 +386,9 @@ pop_rate <- nfa %>%
 pop_rate
 ```
 
-The population has been multiplied by `r pop_rate$prop` from 1960 to 2014, from 3.07 billions to 7.26 billions. Each year the population increase by `r pop_rate$rate` people.
+The population has been multiplied by `r pop_rate$prop` from 1960 to 2014, from 3.07 billion to 7.26 billion. Each year the population increase by `r pop_rate$rate` people.
 
-It seems that there is a correlation between the increase of the population and the drop of the biocapacity per capita, and between the total consumption and the population. Let's find out how strong this correlation is. We can guess that it will be strong because the BiocapTotGHA and the population are both linear, and the BiocapPerCap is define by these 2 variables.
-
-
+It seems that there is a correlation between the increase of the population and the drop of the biocapacity per capita, and between the total consumption and the population. Let's find out how strong this correlation is. We can guess that it will be strong because the BiocapTotGHA and the population are both linear, and the BiocapPerCap is defined by these two variables.
 
 
 ```{r}
@@ -391,7 +398,7 @@ nfa_comp <- nfa %>%
   spread(key = record, value = total)
 
 
-# Tester la normalité des distribution pour savoir si utiliser pearson ou spearman
+# Test the normality of the distribution
 qqplot(nfa_comp$population, nfa_comp$EFConsTotGHA)
 hist(nfa_comp$EFConsTotGHA)
 hist(nfa_comp$population)
@@ -411,8 +418,8 @@ corrgram(nfa_comp,
          diag.panel=panel.minmax, text.panel=panel.txt)
 ```
 
-Not suprising, We can confirm that the biocapacity per capita is higly negatively correlated with the population (-0.9994) and the test is higly sifnigicative p-value < 0.001.
-The total consumption is higly positively correlated to the population (0.9967), and the test is higly sifnigicative p-value < 0.001.
+Not suprising, We can confirm that the biocapacity per capita is higly negatively correlated with the population (-0.9994) and the test is higly significative p-value < 0.001.
+The total consumption is higly positively correlated to the population (0.9967), and the test is higly significative p-value < 0.001.
 
 ```{r}
 nfa %>%
@@ -420,10 +427,14 @@ nfa %>%
   ggplot(aes(year, total)) + 
   geom_line() +
   geom_smooth() +
-  facet_wrap(~record, scales = "free")
+  facet_wrap(~record, scales = "free") +
+  labs(title = "Evolution from 1961 to 2013 for the World",
+       subtitle = "Free scale for each graph",
+       x = "Year",
+       y = "Total (GHA)")
 ```
 
-At the world scale, the commerciales exchanges balanced out, so the export and import follows the same patterns, and the consumption and production too. The purpose of the visualisation is to show the global increase in all area, production/consumption, import/export. The total biocapacity increases a bit too, but the biocapacity per capita has been divided by 2 during the period 1961 - 2014. (beware, all the visualisation are on a free scale)
+At the world scale, the commercial exchanges balanced out, so the export and import follow the same patterns, and the consumption and production too. The purpose of the visualisation is to show the global increase in all area, production/consumption, import/export. The total biocapacity increases a bit too, but the biocapacity per capita has been divided by two during the period 1961 - 2014. (beware, all the visualisation are on a free scale)
 
 
 # Evolution by region
@@ -452,6 +463,7 @@ nfa_region_lvl <- nfa_country_lvl %>%
 
 ```
 
+
 ## Biocapacity per capita
 
 ```{r}
@@ -466,7 +478,7 @@ nfa_region_lvl %>%
 ```
 
 
-The biocapactity per capita decreases in every region of the world. The rate seems particularly high in Oceania and Latin America & Caribbean.
+The biocapacity per capita decreases in every region of the world. The rate seems particularly high in Oceania and Latin America & Caribbean.
 
 ```{r}
 nfa_country_lvl %>%
@@ -475,11 +487,11 @@ nfa_country_lvl %>%
   geom_line()+
   labs(x = "Year",
        y = "Biocapacity per Capita (GHA/person)",
-       title = "Biocapacity per capita for each region")
+       title = "Biocapacity per capita for Oceania")
 
 ```
 
-Focusing on Oceania, we can see that most of the biocapacity (and the decrease of it) is due to 3 countries, Australie, New Zealand, and at a lower level Papua New Guinea. Australia is a huge country with a low density of population.
+Focusing on Oceania, we can see that most of the biocapacity (and the decrease of it) is due to 3 countries, Australie, New Zealand, and at a lower level Papua New Guinea. Australia is a huge country with a low density of population, so it's high biocapacity per capita in the region is not surprising.
 
 ```{r}
 
@@ -493,15 +505,15 @@ nfa_country_lvl %>%
 
 ```
 
-In the Latin America, the higher biocapacity and the biggest decrease is due to the French Guyana. 
+In Latin America, the higher biocapacity and the biggest decrease is due to French Guyana. 
 
-The visualisation per region shows that within a region there are big variations, there is a big range of values with some country having a big amount, balanced by many countries with a small amount. Ocenia is the region with the highest biocapacity per capita, but looking in detail, some country in other region have far more biocapacity per capita, but the overall amount is reduce due to the number of countries in that region with a very low value.
+The visualisation per region shows that within a region there are big variations, there is a big range of values with some country having a big amount, balanced by many countries with a small amount. Oceania is the region with the highest biocapacity per capita, but looking in detail, some country in other region have far more biocapacity per capita, but the overall amount is reduced due to the number of countries in that region with a very low value.
 
-For example, in Latin America; French Guiana and Brazil have far more biocapacity per capita than the top countries in Oceania, but in Latin America there are many countries with a low biocapacity per capita, which lower the numbers for the region.
+For example, in Latin America; French Guiana and Brazil have far more biocapacity per capita than the top countries in Oceania, but in Latin America, there are many countries with a low biocapacity per capita, which lower the numbers for the region.
 
-It's probably more interesting to look at the top countries for biocapacity and consumption, rather than by region which are composed of disparate countries.
+As a result, it's more interesting to look at the top countries for biocapacity and consumption, rather than by regions which are composed of disparate countries.
 
-We can however make a visualisation to see at a region level the evolution between biocapacity and consumption, and which region have a higher consumption, and the trend over time
+We can, however, make a visualisation to see at regional level the evolution between biocapacity and consumption, and which region have higher consumption, and the trend over time
 
 ```{r}
 nfa_region_lvl %>%
@@ -511,19 +523,21 @@ nfa_region_lvl %>%
   geom_ribbon(alpha = 0.5) +
   facet_wrap(~UN_region, scales = "fixed") +
   labs(x = "Year",
-       y = "Biocapacity per Capita (GHA/person)",
-       title = "Biocapacity per capita for each region")
+       y = "Biocapacity (GHA)",
+       title = "Gap between Consumption and Biocapacity for each region",
+       subtitle = "The black line represents the consumption")
 
 ```
 
-We can see that Asia, Europe and North America have a consumption above biocapacity during all the period shown. Africa's consumption has just recently been exceed the biocapacity. The other region still have a biocapacity above consumption. Even if the biocapacity increases in Asia, the rate at which the consumption grows and the growth of the gap between biocapacity and consumption is impressive compare to the other regions.
+We can see that Asia, Europe and North America have a consumption above biocapacity during all the period shown. Africa's consumption has just recently exceeded its biocapacity. The other regions still have a biocapacity above consumption. Even if the biocapacity increases in Asia, the rate at which the consumption grows and the growth of the gap between biocapacity and consumption are impressive compared to the other regions.
 
 
 # Highest contributors
 
+
 ## Highest decrease rate in biocapacity per capita
 
-Let's have a look at the top and bottom countries for the biocapacity rate
+Let's have a look at the countries at the top and bottom of the biocapacity rate.
 
 ```{r}
 bio_rate <- nfa_country_lvl %>%
@@ -543,11 +557,12 @@ nfa_bio %>%
   geom_line()+
   labs(x = "Year",
        y = "Biocapacity per Capita (GHA/person)",
-       title = "Biocapacity per capita for each region")  
+       title = "Biocapacity per capita for the highest decreasing rate",
+       subtitle = "15 first countries with highest decreasing rate")  
   
 ```
 
-The highest lost in biocapacity per capita is French Guiana. Is it due to a decrease of the total biocapacity, the increase of the population or both ?
+The highest lost in biocapacity per capita is French Guiana. Is it due to a decrease in the total biocapacity, the increase in the population or both?
 
 ```{r}
 prop <- nfa_country_lvl %>%
@@ -559,7 +574,7 @@ prop[2,] / prop[1,]
 
 ```
 
-The division by 2 of the biocapacity of French Guyana is mainly due to the increase of the population which has almost being multiply by 2. During that time, the total biocapacity has slightly decreased (3%).
+The division by 2 of the biocapacity of French Guyana is mainly due to the increase of the population which has almost been multiply by 2. During that time, the total biocapacity has slightly decreased (3%).
 
 
 ## Highest bio capacity / consumption and debt per capita
@@ -581,7 +596,6 @@ nfa2014 %>%
 ```
 
 
-
 ```{r}
   
 nfa2014 %>%
@@ -598,7 +612,7 @@ nfa2014 %>%
        title = "20 first countries whith highest Consumption per capita")
 ```
 
-The first countries with the highest consumption per capita are wealthy countries with low population compared to their life level (Qatar, Luxembourg). We find the countries from middle east producing oil (Qatar, Emirates, Bahrain, Kuwait, Oman, Saudi Arabia). Countries with a high consumption (China, India) but with a high population don't have a high consumption per capita, where countries with a lower number of inhabitants (USA, Canada) are in the firsts place for consumption per capita. Surprisingly Mongolia is fourth, and Trinidad and Tobago fourteenth, which are country I wasn't expecting in the top 15.
+The first countries with the highest consumption per capita are wealthy countries with low population compared to their life level (Qatar, Luxembourg). We find the countries from the Middle East producing oil (Qatar, Emirates, Bahrain, Kuwait, Oman, Saudi Arabia). Countries with high consumption (China, India) but with a high population don't have a high consumption per capita, where countries with a lower number of inhabitants (USA, Canada) are in the firsts place for consumption per capita.
 
 ```{r}
 
@@ -620,9 +634,9 @@ nfa2014 %>%
        subtitle = "Debt = Consumption - biocapactiy")
 ```
 
-Looking at the ecological debt (consumption - biocapacity), the highest are the wealthy countries with a small or desertic territory. The first countries are still the oil producer from middle east, luxembourg, which has a small territory and therefore poor biocapacity.
+The countries with the highest ecological debt (consumption - biocapacity) are the wealthy countries with a small or arid territory. The first countries are still the oil producer from the Middle East, Luxembourg, which has a small territory and therefore poor biocapacity.
 
-```{r eval=FALSE, include=FALSE}
+```{r}
 
 library(plotly)
 
@@ -633,10 +647,10 @@ plt1 <- nfa2014 %>%
   geom_point() +
   scale_y_log10()+
   scale_x_log10() +
-  labs(x = "gdp per capita (USD 2010)",
-     y = "Consumption per Capita (GHA/person)",
-     title = "Ratio between consumption per capita and GDP per capita",
-     subtitle = "footprint = Consumption - biocapactiy")
+  labs(x = "gdp per capita log(USD 2010)",
+     y = "Consumption per Capita log(GHA/person)",
+     title = "Consumption per capita vs GDP per capita",
+     subtitle = "log scale")
 
 ggplotly(plt1)
 
@@ -648,14 +662,14 @@ cor.test(log(cons_vs_gdp$gdp_2010usd), log(cons_vs_gdp$total))
 
 ```
 
-On a log scale, there's a strong correlation between the consumption per cap and the gdp per cap. We can see that the countries in Asia spread along the graph, with Timor at the lowest consumption and Qatar with the highest. Europe and North America are at the top half of the graph, where Africa is at the bottom half. Latin America and the Caribbean are located in the middle. Anyway, the region overlap, and therefore, Countries from different region can be close, the top of african countries are closed to the bottom of european and the middle of Latin american (Romania, Gabon, Mexico for example)
+On a log scale, there's a strong correlation between the consumption per cap and the gdp per cap. We can see that the countries in Asia spread along the graph, with Timor at the lowest consumption and Qatar with the highest. Europe and North America are at the top half of the graph, where Africa is at the bottom half. Latin America and the Caribbean are located in the middle. Anyway, the regions overlap, and therefore, Countries from different regions can be close, the top of African countries are close to the bottom of European countries and the middle of Latin American countries (Romania, Gabon, Mexico for example)
 
 
 ## Highest total bio capacity / consumption
 
 ```{r}
 require(maps)
-library(RColorBrewer)
+
 tbl_df(iso3166)
 iso3166$mapname <- str_replace(iso3166$mapname, pattern = "\\(.*\\)", "")
 
@@ -694,11 +708,12 @@ ggplot(aes(long, lat, group = group, fill = total)) +
   scale_fill_gradient(low = "green4", high = "chartreuse") +
   coord_fixed(1.5) +
   ggthemes::theme_map()+
-  labs(title = "Total biocapacity in 2014")
+  labs(title = "Total biocapacity in 2014",
+       fill = "Biocapacity (GHA)")
 
 ```
 
-The total biocapacity compared to the surface of the territory is clearly seen on the map.
+The total biocapacity compared to the surface of the territory is shown on the map.
 
 ```{r}
 nfa2014 %>%
@@ -712,11 +727,11 @@ nfa2014 %>%
   coord_flip() +
   labs(x = "Countries",
        y = "Total consumption (GHA)",
-       title = "15 first countries with the consumption")  
+       title = "15 first countries with the highest consumption")  
 
 ```
 
-The top list for consumption is not surprising, China and India, mainly due to the large population and the growth of the life still. USA, Russia and Brazil complete the top 5. We can find the top countries for economical activities, such as Japan, Germany, France, UK ..
+The top list for consumption is not surprising, China and India, mainly due to the large population and the improvement of the lifestyle. USA, Russia and Brazil complete the top 5. We can find the top countries for economic activities, such as Japan, Germany, France, UK.
 
 ```{r}
 mapdata <- nfa2014 %>% 
@@ -731,16 +746,16 @@ ggplot(aes(long, lat, group = group, fill = total)) +
   scale_fill_gradient2(low="blue", mid = "pink", high = "red") +
   coord_fixed(1.5) +
   ggthemes::theme_map() +
-  labs(title = "Total consumption in 2014")
+  labs(title = "Total consumption in 2014",
+       fill = "Consumption (GHA)")
 
 ```
 
 The map looks similar to the previous one, with the same top countries for consumption than for biocapacity.
-Let's have a look hot they are balanced for theses countries.
-
 
 
 ## Carbon Emission
+
 
 ### Evolution over time
 
@@ -792,19 +807,13 @@ library(corrgram)
 
 corrgram(nfa_corcarb,
          cor.method = "spearman",
-         main = "Consumption and biocapacity",
+         main = "Carbon and Consumption",
          lower.panel=panel.shade, upper.panel=panel.pie,
          diag.panel=panel.minmax, text.panel=panel.txt)
 
-nfa_corcarb %>%
-  gather(type, value, -year) %>%
-  ggplot(aes(year, value)) +
-  geom_line()+
-  facet_wrap(~type, scale ="free")
-
 ```
 
-There is a strong positive correlation between the carbon emission and the consumption.
+There is a strong positive correlation between carbon emission and consumption.
 Let's find out at what rate they are growing.
 
 ```{r}
@@ -817,6 +826,22 @@ nfa_corcarb %>%
 ```
 
 Between 1961 and 2014, the population has been multiply by 2.36, the consumption by 2.93, and the carbon emission by 4.01.
+
+We can visualize the similarity of the evolution on the following graph:
+
+```{r}
+
+nfa_corcarb %>%
+  gather(type, value, -year) %>%
+  ggplot(aes(year, value)) +
+  geom_line()+
+  facet_wrap(~type, scale ="free") +
+  labs(title = "Comparison of the evolution between carbon emissions, consumption and population",
+       subtitle = "Free scale for each graph",
+       x = "Year",
+       y = "Total (GHA)")
+```
+
 
 ### Situation in 2014
 
@@ -838,25 +863,9 @@ carbon %>%
          title = "15 first countries with the highest carbon emission") 
 ```
 
-The first higher emitters of CO2 are the the same countries that are the first in consumption. Some countries changed position (Brazil, Iran).
+The first higher emitters of CO2 are the same countries that are the first in consumption. Some countries changed position (Brazil, Iran).
 
 ```{r}
-carbon <- nfa2014 %>%
-  select(country, iso_code, year, record, population, total, carbon, gdp_2010usd) %>%
-  filter(record %in% c("EFConsTotGHA"), country != "World") %>%
-  mutate(carbon_percap = carbon / population)
-
-carbon %>%
-  arrange(desc(carbon)) %>%
-  head(15) %>%
-  mutate(country = fct_reorder(country, carbon)) %>%
-  ggplot(aes(country, carbon, fill = carbon)) + 
-    geom_col() + 
-    coord_flip() +
-    scale_fill_gradient(low = "pink", high = "red") +
-    labs(x = "Carbon emission (GHA)",
-         title = "15 first countries with the highest carbon emission") 
-
 mapdata <- carbon %>% 
   select(country, iso_code, carbon, carbon_percap) %>%
   inner_join(iso3166, by = c("iso_code" = "a3")) %>%
@@ -869,12 +878,13 @@ ggplot(aes(long, lat, group = group, fill = carbon)) +
   scale_fill_gradient(low="pink", high = "red") +
   coord_fixed(1.5) +
   ggthemes::theme_map() +
-  labs(title = "Carbon emission in 2014 in GHA")
+  labs(title = "Carbon emission in 2014 in GHA",
+       fill = "Carbon emission (GHA)")
 
 ```
 
 The map for the carbon emission is very similar to the one for consumption.
-Of course countries like China and India have a high level of global emission, but as they have a huge population, let's have a look at the main emitters per capita.
+Of course, countries like China and India have a high level of global emission, but as they have a huge population, let's have a look at the main emitters per capita.
 
 ```{r}
 carbon %>%
@@ -895,12 +905,15 @@ ggplot(aes(long, lat, group = group, fill = carbon_percap)) +
   scale_fill_gradient(low="pink", high = "red") +
   coord_fixed(1.5) +
   ggthemes::theme_map() +
-  labs(title = "Carbon emission per capita in 2014 in GHA")
+  labs(title = "Carbon emission per capita in 2014 in GHA",
+       fill = "Carbon emission (GHA/person)")
 
 ```
 
+When looking at carbon emissions per person, the configuration of the map changes and seems more measured. That said, the global impact on the planet is measured by the total emissions seen in the previous map.
 
-## Highest debs and contribution
+
+## Highest debt and contribution
 
 ```{r}
 nfa2014 %>%
@@ -917,11 +930,11 @@ nfa2014 %>%
   scale_fill_gradient(low = "green4", high = "chartreuse") +
   labs(x = "Total Biocapacity excedent (GHA)",
        title = "20 first countries with the highest contribution",
-       subtitle = "contribution = biocapactiy - Consumption")    
+       subtitle = "contribution = biocapacity - Consumption")    
 
 ```
 
-I define the contribution as the difference between the biocapacity and the consumption, to see which countries have still a positive impact. Brazil is far ahead, and we can find Canada, Russia, Australia, which even if they are in the top countries for consumption have still a positive impact due to their high biocapacity. Mainy countries are from latin America and Africa, which can make sense due to their natural environnement and low consumption.
+I define the contribution as the difference between the biocapacity and the consumption, to see which countries have still a positive impact. Brazil is far ahead, and we can find Canada, Russia, Australia, which even if they are in the top countries for consumption have still a positive impact due to their high biocapacity. Main countries are from Latin America and Africa, which can make sense due to their natural environment and low consumption.
 
 ```{r}
 nfa2014 %>%
@@ -938,12 +951,12 @@ nfa2014 %>%
   scale_fill_gradient(low = "pink", high = "red") +
   labs(x = "Total Biocapacity excedent (GHA)",
        title = "20 first countries with the highest debt",
-       subtitle = "debt = Consumption - biocapactiy") 
+       subtitle = "debt = Consumption - biocapacity") 
   
 
 ```
 
-I define the debt as the difference between the consumption and the biocapacity, to see which countries have still a negative impact. The top 3 countries are China, USA and India. We can find as well the european countries with the most active economy (Germany, UK, Italy)
+I define the debt as the difference between the consumption and the biocapacity, to see which countries have still a negative impact. The top 3 countries are China, the USA and India. We can find as well the European countries with the most active economy (Germany, UK, Italy)
 
 
 ```{r}
@@ -967,15 +980,16 @@ ggplot(aes(long, lat, group = group, fill = impact)) +
   scale_fill_gradient2(low="red", mid = "grey", high = "chartreuse", midpoint = 0) +
   coord_fixed(1.7) +
   ggthemes::theme_map() +
-  labs(title = "Ecological debt or countribution in 2014",
-       subtitle = "debt in % of consumption and contribution in % of biocapacity")
+  labs(title = "Ecological debt or contribution in 2014",
+       subtitle = "debt in % of consumption and contribution in % of biocapacity",
+       fill = "Impact (%)")
 
 ```
 
 
-The map display the contribution for each countries as a percentage of their biocapacity and the debt as a percentage of their consumption.
-In percentage, the impact is balanced, and the main countries (China, USA) have a lower impact than other like Iran. It can be seen as how vertuous or not a country is.
-But what is interested at a world level is the global impact on the plant. Let's see the impact in total with the next map.
+The map displays the contribution for each country as a percentage of their biocapacity and the debt as a percentage of their consumption.
+The main countries (China, USA) seem to balance better in percentage compared to others like Iran.
+But what is interested at a world level is the global impact on the planet. Let's see the impact in total with the next map.
 
 ```{r}
 
@@ -999,16 +1013,17 @@ ggplot(aes(long, lat, group = group, fill = impact)) +
   coord_fixed(1.7) +
   ggthemes::theme_map() +
   labs(title = "Ecological debt or countribution in 2014",
-       subtitle = "in GHA")
+       subtitle = "in GHA",
+       fill = "Impact (GHA)")
 
 ```
 
-Looking at the map with the total contribution or debt, we can see that China, USA and India are really highlighted. The countries with a positive impact brazil, Canada, Russia, can't counterbalance the level of the countries with the highest negative impact.
+Looking at the map with the total contribution or debt, we can see that China, USA and India stand out. The countries with a positive impact (Brazil, Canada, Russia), can't counterbalance the level of the countries with the highest negative impact.
 
 
-# Countries who consummes half of the total consumption
+# Countries who consumes half of the total consumption
 
-Looking at the previous map, it seems that only few countries have a huge impact on the total consumption on the planet.
+Looking at the previous map, it seems that only a few countries have a huge impact on the total consumption on the planet.
 
 ```{r}
 
@@ -1040,11 +1055,10 @@ eco_debt_tot %>%
   labs(title = "Consumption of the first countries that consume 2/3 of the world consumption",
        subtitle = "ration is the percentage of total consumption")
 
-
 ```
 
-Only 12 countries consumes 2/3 of the total world consumption.
-China, USA, India, Russia and Brazil consumes more thant half of the total world consumption.
+Only 12 countries consume 2/3 of the total world consumption.
+China, USA, India, Russia and Brazil consumes more than half of the total world consumption.
 We can show it as a map of the first country with the higher consumption that consumes 2/3 of the total world consumption :
 
 ```{r}
@@ -1073,7 +1087,8 @@ ggplot(aes(long, lat, group = group, fill = ratio)) +
   coord_fixed(1.7) +
   ggthemes::theme_map() +
   labs(title = "Countries which consumes 2/3 of the ressources of the planet.",
-       subtitle = "First main contributors")
+       subtitle = "First main contributors",
+       fill = "% of total consumption")
 
 ```
 
@@ -1096,17 +1111,19 @@ nfa_country_lvl %>%
   facet_wrap(~country, scales = "fixed") +
   labs(x = "Year",
        y = "Biocapacity / Consumption (GHA)",
-       title = "Difference between Biocapacity and EFConsTotGHA for the first 5 biggest consummers",
+       title = "Difference between Biocapacity and EFConsTotGHA for the first 5 biggest consumers",
        subtitle = "The black line represent the consumption")
 ```
 
+We can see that for the countries with higher consumption than biocapacity (China, India, USA), the gap is clearly increasing, the consumption rate is higher than the biocapacity rate. For the countries with a higher biocapacity than consumption, the gap is reducing, even if their biocapacity increases too. 
 
 
-# land
+# Type of land
 
-```{r eval=FALSE, include=FALSE}
+```{r}
 nfa %>%
-  filter(record %in% c("BiocapTotGHA", "EFConsTotGHA"), UN_region == "World", !is.na(crop_land)) %>%
+  filter(record %in% c("BiocapTotGHA", "EFConsTotGHA"), UN_region == "World", !is.na(crop_land), 
+         !is.na(grazing_land), !is.na(forest_land), !is.na(fishing_ground), !is.na(built_up_land)) %>%
   select(year, record, total, crop_land, grazing_land, forest_land, fishing_ground, built_up_land, carbon) %>%
   group_by(year, record) %>% 
   summarise(crop = sum(crop_land, na.rm = TRUE),
@@ -1124,10 +1141,24 @@ nfa %>%
   scale_color_manual(values = c("green4", "red")) +
   labs(x = "year",
        y = "total in GHA",
-       title = "Division by type of land for biocapacity and consumption over years")
+       title = "Evolution by type of land for biocapacity and consumption over years")
 
 
 ```
 
-The biocapacity is over consumption for fishing land, forest, and grazing. Biocapactiy and consumption are the same for crop which make sense because all biocapacity is used for consumption. It's the same for build up land, all the capacity of the area is used for production. So the fact that in total, the consumption is above the biocapacity is entirely due to carbon emissions. The biocapacity for carbon is contained in forest land, which takes into consideration timber product as well as sequestration.
+The biocapacity is over the consumption for fishing land, forest, and grazing. Biocapactiy and consumption are the same for crop land which makes sense because all biocapacity is used for consumption. It's the same for build-up land, all the capacity of the area is used for production. So the fact that in total, the consumption is above the biocapacity is entirely due to carbon emissions. The biocapacity for carbon is contained in forest land, which takes into consideration timber product as well as sequestration.
+
+
+# Conclusion
+
+The analysis of the data shows that :
+
+* The consumption is higher than the biocapacity since the '70s.
+* The increase rate of consumption is higher than the biocapacity increase rate, so the gap between the two is increasing.
+* The carbon emissions follow the consumption, and at a higher rate
+* Only five countries consume 50% of the total consumption
+* 2/3 of the total consumption is due to the first 12 countries.
+* There are changes in the top countries based on an analysis of the total or per capita, due to the effect of the population size.
+
+
 
