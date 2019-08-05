@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Exploratory data analysis
 
 ```{r}
+library(here)
 library(tidyverse)
 library(scales)
 library(pROC)
@@ -21,9 +22,11 @@ library(e1071)
 library(ROSE)
 
 dir_path <- file.path("~","Perso", "R", "Analysis", "Fraud detection")
-file_path <- file.path(dir_path, "creditcard.csv")
+path <- file.path(dir_path, "creditcard.csv")
+#path <- file.path(here::here( "Analysis", "Fraud detection", "creditcard.csv"))
+#path <- file.path(here::here("credit-card-fraud-detection", "credicard.csv"))
 
-credcard <- read.csv(file_path)
+credcard <- read.csv(path)
 
 dim(credcard)
 glimpse(credcard)
@@ -168,15 +171,16 @@ What is the distribution of the Amount transaction for each Class, limited  to A
 
 ```{r}
 credcard %>%
-  dplyr::filter(Amount < 2500) %>%
+  dplyr::filter(Amount < 2500, Amount !=0) %>%
   ggplot(aes(Amount)) +
   facet_wrap(~Class, scales = "free") +
   geom_histogram(aes(fill=factor(Class)), bins = 50) +
   scale_y_continuous(labels = comma) +
-  scale_x_continuous(labels = dollar_format()) +
+  scale_x_log10(labels = dollar_format()) +
+  scale_fill_manual(values = c("#6699ff", "#ff0066"))+
   labs(title = "Histogram of Amount of transaction per Class",
-       subtitle = "Positive = 1, free scale for y axis",
-       x = "Amount of transaction",
+       subtitle = "Positive = 1, log scale for x axis, free scale for y axis",
+       x = "Amount of transaction, log scale",
        y = "Number of transactions")
 
 ```
@@ -193,20 +197,36 @@ We know already that the data are highly imbalanced, so it will be difficult for
 
 
 ```{r}
-
+set.seed(4567)
 rows<-sample(nrow(credcard))
 removedcol <- which(names(credcard) %in% c("Time", "hours"))
 credcard_shuffled <- credcard[rows, -removedcol]
 
-cred_scale <- as.data.frame(scale(credcard_shuffled))
+scale_data <- scale(credcard_shuffled)
+cred_scale <- as.data.frame(scale_data)
 cred_scale$Class <- credcard_shuffled$Class
 
-split <-round(nrow(cred_scale)*0.7)
-traindf <- cred_scale[1:split,]
-testdf <- cred_scale[split:nrow(cred_scale),]
+# Split the data in order to keep the same imbalanced data than the 
+# original dataset.
+# So train data will be 70% of the whole dataset with 0.172 % of fraud
+# and the test data will be 30% of the whole dataset with 0.172% of fraud too.
+
+test0 <- cred_scale[cred_scale$Class == 0, ]
+split <-round(nrow(test0)*0.7)
+traindf0 <- test0[1:split,]
+testdf0 <- test0[(split+1):nrow(test0),]
+
+test1 <- cred_scale[cred_scale$Class == 1, ]
+split <-round(nrow(test1)*0.7)
+traindf1 <- test1[1:split,]
+testdf1 <- test1[(split+1):nrow(test1),]
+
+traindf <- rbind(traindf0, traindf1)
+testdf <- rbind(testdf0, testdf1)
 
 prop.table(table(traindf$Class)) * 100
 prop.table(table(testdf$Class)) * 100
+
 
 #save the splitted date in case of messing up
 ref_traindf <- traindf
@@ -219,6 +239,8 @@ credcard_modglm <- glm(Class ~ ., data = traindf, family = "binomial")
 We measure the usual metrics and discuss whether they apply for this case with imbalanced data
 
 ```{r}
+
+final_decision <- testdf$Class
 
 credcard_prob <- predict(credcard_modglm, testdf, type = "response")
 
@@ -252,14 +274,13 @@ The recall is the proportion of the positive class that were correctly identify
 ```{r}
 # With a function
 
-confMatrixPlot <- function(prediction, reference){
+confMatrix <- function(prediction, reference){
   
-  confMatrix <- confusionMatrix(as.factor(prediction), as.factor(reference), mode = "prec_recall")
-  
+  confMatrix <- confusionMatrix(as.factor(prediction), as.factor(reference), positive = "1", mode = "prec_recall")
   confmat <- as.data.frame(confMatrix$table)
   confmat$label <- c("TN", "FP", "FN", "TP")
   
-  confmat %>%
+  cm_plot <- confmat %>%
   mutate(indic = abs(as.numeric(Prediction) - as.numeric(Reference)))  %>%
   ggplot(aes(Reference, Prediction,fill = as.factor(indic))) +
     geom_tile() +
@@ -271,22 +292,51 @@ confMatrixPlot <- function(prediction, reference){
     labs(title = "Confusion Matrix",
          subtitle = "Positive = 1")
   
+  measure <- list("reference" = reference, "prediction" = prediction)
+  metrics <- c(confMatrix$byClass['Recall'], confMatrix$byClass['Precision'])
+  matrix <- c(confmat$Freq)
+  names(matrix) <-confmat$label
+  
+  return(list("plot" = cm_plot, "matrix" = matrix,"metrics" = metrics, "measure" = measure))
 }
 
-confMatrixPlot(result$pred, result$Class)
+model_comp <- data.frame(model = character(),
+                         method = character(),
+                         TN = integer(),
+                         FP = integer(),
+                         FN = integer(),
+                         TP = integer(),
+                         recall = double(),
+                         precision = double()
+                        )
 
-cf_glm <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
-cf_glm
+add_model <- function(cfmx, model_list, name, method){
+  new_row <- data.frame(t(c(name, method, cfmx$matrix, cfmx$metrics)))
+  colnames(new_row) <- colnames(model_list)
+  model_list <- rbind(model_list, new_row)
+  return(model_list)
+} 
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+cf$measure
+
+model_comp <- add_model(cf, model_comp, "glm", "none")
+
+final_decision <- bind_cols(class = final_decision, glm = result$pred)
 
 ```
 
-The recall is `r cf_glm$byClass['Recall']` and the the precision is `r cf_glm$byClass['Precision']`
 
-The confusion Matrix shows that the model identified correctly `r cf_glm$table[2,2]` fraud on `r cf_glm$table[2,2] + cf_glm$table[1,2]`  fraud present in the test dataet.
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
+
+The confusion Matrix shows that the model identified correctly `r cf$matrix["TP"]` fraud on `r cf$matrix["TP"] + cf$matrix["FN"]`  fraud present in the test dataet.
 It identify as legitimate 49 fraud transaction.
-The recall is `r cf_glm$byClass['Recall']`  (number of fraud correctly identified / number of total fraud) <=> (TP / (TP + FN))
-The identified `r cf_glm$table[2,2] + cf_glm$table[2,1]` transaction as fraud, `r cf_glm$table[2,2]` were fraud and`r cf_glm$table[2,1]` were false positive.
-the precision is `r cf_glm$byClass['Precision']` (number of correctly identified / number of fraud identified) <=> (TP / TP + FP)
+The recall is `r cf$metrics['Recall']`  (number of fraud correctly identified / number of total fraud) <=> (TP / (TP + FN))
+The identified `r cf$matrix["TP"] + cf$matrix["FP"]` transaction as fraud, `r cf$matrix["TP"]` were fraud and`r cf$matrix["FP"]` were false positive.
+the precision is `r cf$metrics['Precision']` (number of correctly identified / number of fraud identified) <=> (TP / TP + FP)
 
 Let's visualise on some dimension where are located the False negatives
 
@@ -305,33 +355,6 @@ result %>%
 ```
 
 
-Can we improve the model by selecting differently the features ? 
-
-```{r}
-traindf <- cred_scale[1:split,]
-testdf <- cred_scale[split:nrow(cred_scale),]
-
-prop.table(table(traindf$Class)) * 100
-prop.table(table(testdf$Class)) * 100
-
-selectedcol <- which(names(traindf) %in% c("Class", "V10", "V14", "V12", "V13"))
-
-credcard_mod <- glm(Class ~ ., data = traindf[, selectedcol], family = "binomial")
-
-credcard_prob <- predict(credcard_mod, testdf, type = "response")
-
-result <- testdf
-result$prob <- credcard_prob
-result$pred <- ifelse(result$prob > 0.50,1,0)
-
-confMatrixPlot(result$pred, result$Class)
-
-confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
-```
-
-Don't use that in the final analysis
-
-
 ## Random Forest
 
 ```{r}
@@ -339,26 +362,30 @@ library(randomForest)
 
 trainrf <- traindf
 trainrf$Class <- as.factor(trainrf$Class)
-mod_rf <- randomForest(Class ~ ., trainrf, ntree = 500)
+mod_rf <- randomForest(Class ~ ., trainrf, ntree = 100)
 
 pred <-  predict(mod_rf, testdf)
 
 result <- testdf
 result$pred <- pred
 
-confMatrixPlot(result$pred, result$Class)
-cf_rf <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
-cf_rf
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
 
+model_comp <- add_model(cf, model_comp, "random forest", "none")
+final_decision <- bind_cols(final_decision, rf = result$pred)
 ```
 
 
-The recall is `r cf_rf$byClass['Recall']` and the the precision is `r cf_rf$byClass['Precision']`
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
 
 
 # Using over and under sampling
 
 ```{r}
+set.seed(4567)
 sampling <- ovun.sample(Class ~ ., data = traindf, method = "both", N = nrow(traindf), p = 0.3)
 
 ovun_sampling <-sampling$data 
@@ -367,31 +394,51 @@ prop.table(table(ovun_sampling$Class))
 
 ## Logistic Regression
 
+### Lasso regression
+
 ```{r}
 mod_glm.ovun <- glm(Class ~ ., data = ovun_sampling, family = "binomial")
-
-library(car)
-
-vif(credcard_mod)
-
-removedcol <- which(names(ovun_sampling) %in% c("V1", "V2","V3", "V19", "V20", "V7", "V23", "V17", "Amount"))
-selcol <- which(names(ovun_sampling) %in% c("V1", "V4", "V5", "V8", "V10", "12", "Class"))
-
-mod_glm.ovun <- glm(Class ~ ., data = ovun_sampling[, selcol], family = "binomial", control=glm.control(maxit=50))
-
-credcard_prob <- predict(mod_glm.ovun, testdf, type = "response")
-
-result <- testdf
-result$prob <- credcard_prob
-result$pred <- ifelse(result$prob > 0.50,1,0)
-
-confMatrixPlot(result$pred, result$Class)
-
-cf_glm.ovun <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
-cf_glm.ovun
 ```
 
-The recall is `r cf_glm.ovun$byClass['Recall']` and the the precision is `r cf_glm.ovun$byClass['Precision']`
+Using over and undersampling, the glm function doesn't converge anymore. By adapting the proportion of positive class, I can manage to 
+remove the convergence problem, but the message "glm.fit fitted probabilities numerically 0 or 1 occured" is always there.
+As the number of variable and observation hasn't changed from the logistic regression on the training data before over sampling, the problem is more likely due to overlapping.
+I will use lasso regression to select the best variables 
+
+```{r}
+
+library(glmnet)
+
+predictor <- model.matrix(Class ~., ovun_sampling)
+
+set.seed(4567)
+cv.lasso <- cv.glmnet(predictor, ovun_sampling$Class, alpha = 1, family = "binomial")
+mod_glmnet.ovun <- glmnet(predictor, ovun_sampling$Class, alpha = 1, family = "binomial", lambda = cv.lasso$lambda.min)
+
+coef(mod_glmnet.ovun)
+
+predictor.test <- model.matrix(Class  ~ ., testdf)
+
+result <- testdf
+result$prob <- mod_glmnet.ovun %>% predict(newx = predictor.test)
+result$pred <- ifelse(result$prob > 0.5, 1, 0)
+
+plot(cv.lasso)
+log(cv.lasso$lambda.min)
+log(cv.lasso$lambda.1se)
+coef(cv.lasso, cv.lasso$lambda.min)
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+
+model_comp <- add_model(cf, model_comp, "glmnet", "over under sampling")
+
+final_decision <- bind_cols(final_decision, glmnet_ovun = result$pred)
+```
+
+
 
 ## Random Forest
 
@@ -401,20 +448,24 @@ Random Forest
 library(randomForest)
 
 ovun_sampling$Class <- as.factor(ovun_sampling$Class)
-mod_rf.ovun <- randomForest(Class ~ ., ovun_sampling, ntree = 500)
+mod_rf.ovun <- randomForest(Class ~ ., ovun_sampling, ntree = 100)
 
 pred <-  predict(mod_rf.ovun, testdf)
 
 result <- testdf
 result$pred <- pred
 
-confMatrixPlot(result$pred, result$Class)
-cf_rf.ovun <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
-cf_rf.ovun
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
 
+model_comp <- add_model(cf, model_comp, "random forest", "over under sampling")
+final_decision <- bind_cols(final_decision, rf_ovun = result$pred)
 ```
 
-The recall is `r cf_rf.ovun$byClass['Recall']` and the the precision is `r cf_rf.ovun$byClass['Precision']`
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
+Ranfom Forest is just a bit better with over sampling.
 
 # Using SMOTE
 
@@ -427,29 +478,48 @@ n0 <- nrow(traindf[traindf$Class == 0,]); n1 <- nrow(traindf[traindf$Class == 1,
 # Calculate the value for the dup_size parameter of SMOTE
 ntimes <- ((1 - r0) / r0) * (n0 / n1) - 1
 
+set.seed(4567)
 smote_output <- SMOTE(X = traindf, target = traindf$Class, K = 5, dup_size = ntimes)
 
 smote_sampling <- smote_output$data
 ```
 
-## Logistic Regression
+## Lasso Regression
+
 
 ```{r}
-mod_glm.smote <- glm(Class ~ V2 + V12 + V13 + V10 + V11 + V7 +  hours24, data = smote_sampling, family = "binomial", control=glm.control(maxit=50))
+predictor <- model.matrix(Class ~., smote_sampling[,-32])
 
-credcard_prob <- predict(mod_glm.smote, testdf, type = "response")
+set.seed(4567)
+cv.lasso <- cv.glmnet(predictor, smote_sampling$Class, alpha = 1, family = "binomial")
+mod_glmnet.smote <- glmnet(predictor, smote_sampling$Class, alpha = 1, family = "binomial", lambda = cv.lasso$lambda.min)
+
+coef(mod_glmnet.smote)
+
+predictor.test <- model.matrix(Class  ~ ., testdf[,-32])
 
 result <- testdf
-result$prob <- credcard_prob
-result$pred <- ifelse(result$prob > 0.50,1,0)
+result$prob <- mod_glmnet.smote %>% predict(newx = predictor.test)
+result$pred <- ifelse(result$prob > 0.5, 1, 0)
 
-confMatrixPlot(result$pred, result$Class)
 
-cf_glm.smote <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
-cf_glm.smote
+plot(cv.lasso)
+log(cv.lasso$lambda.min)
+log(cv.lasso$lambda.1se)
+coef(cv.lasso, cv.lasso$lambda.min)
+
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+
+model_comp <- add_model(cf, model_comp, "glmnet", "SMOTE")
+final_decision <- bind_cols(final_decision, glmnet_smote = result$pred)
 ```
 
-The recall is `r cf_glm.smote$byClass['Recall']` and the the precision is `r cf_glm.smote$byClass['Precision']`
+
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
 
 ## Random Forest
 
@@ -457,19 +527,298 @@ The recall is `r cf_glm.smote$byClass['Recall']` and the the precision is `r cf_
 library(randomForest)
 
 smote_sampling$Class <- rev(as.factor(rev(smote_sampling$Class)))
-mod_rf.smote <- randomForest(Class ~ ., smote_sampling[,-32], ntree = 500)
+mod_rf.smote <- randomForest(Class ~ ., smote_sampling[,-32], ntree = 100)
 
 pred <- predict(mod_rf.smote, testdf)
 
 result <- testdf
 result$pred <- pred
 
-confMatrixPlot(result$pred, result$Class)
-cf_rf.smote <- confusionMatrix(as.factor(result$pred), as.factor(result$Class), positive = "1", mode = "prec_recall")
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
 
-cf_rf.smote
-
+model_comp <- add_model(cf, model_comp, "random forest", "SMOTE")
+final_decision <- bind_cols(final_decision, rf_smote = result$pred)
 ```
 
-The recall is `r cf_glm.smote$byClass['Recall']` and the the precision is `r cf_glm.smote$byClass['Precision']`
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
+
+
+## which observation are incorrectly classified ?
+
+```{r}
+result %>% 
+  mutate(FN = ifelse((Class == 1 & pred == 0), 1, 0)) %>%
+  ggplot(aes(V10, V11, color = as.factor(FN), shape = as.factor(Class))) +
+  geom_point(alpha = 0.2)
+
+#scaled.new <- scale(new, attr(scale_data, "scaled:center"), attr(scale_data, "scaled:scale"))
+result %>% 
+  mutate(FN = ifelse((Class == 1 & pred == 0), 1, 0),
+         amount = Amount * attr(scale_data, "scaled:scale")["Amount"] + attr(scale_data, "scaled:center")["Amount"]) %>%
+  filter(FN == 1) %>%
+  summarize(total = sum(amount))
+
+result %>% 
+  mutate(FN = ifelse((Class == 1 & pred == 0), 1, 0),
+         amount = Amount * attr(scale_data, "scaled:scale")["Amount"] + attr(scale_data, "scaled:center")["Amount"]) %>%
+  filter(Class == 1) %>%
+  summarize(total = sum(amount))
+
+credcard %>%
+  filter(Amount == 354.33)
+```
+
+
+
+## KNN
+
+```{r}
+library(class)
+mod_knn.smote <- randomForest(Class ~ ., smote_sampling[,-32], ntree = 100)
+
+traindknn <- smote_sampling[,-32]
+mod_knn.smote.pred <- knn(train = traindknn[-30], test = testdf[-30], cl = traindknn$Class, k = 5)
+
+result <- testdf
+result$pred <- mod_knn.smote.pred
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+
+model_comp <- add_model(cf, model_comp, "knn k = 5", "SMOTE")
+final_decision <- bind_cols(final_decision, knn5_smote = result$pred)
+```
+
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
+
+```{r}
+#save.image(file = "fraud.RData")
+
+#load("fraud.RData")
+```
+
+```{r}
+
+library(xgboost)
+library(MLmetrics)
+
+# with xgb.DMatric we need the label to be numeric, so as smote sampling recode
+# the class variable (1, 2) instead of (0, 1) I need to recode the variable
+tmp <-as.numeric(smote_sampling$Class)
+tmp <- tmp - 1
+smote_sampling$Class <- as.factor(tmp)
+
+smote_sampling.save <- smote_sampling
+
+traindf_mx <- as.matrix(smote_sampling[,-c(30,32)])
+testdf_mx <- as.matrix(testdf[,-30])
+
+#dtrain <- xgb.DMatrix(data = traindf_mx,label = smote_sampling$Class) 
+dtrain <- xgb.DMatrix(data = traindf_mx,label = tmp) 
+dtest <- xgb.DMatrix(data = testdf_mx,label=testdf$Class)
+
+eval_recall <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+  #print(labels)
+  prediction <- as.numeric(preds > 0.5)
+  #print(prediction)
+  tp <- sum(labels == 1 & prediction == 1)
+  fp <- sum(ifelse((labels == 0 & prediction == 1), 1, 0))
+  fn <- sum(ifelse((labels == 1 & prediction == 0), 1, 0))
+  #err <- as.numeric(sum(labels != (preds > 0)))/length(labels)
+  err <- tp/(tp+fn)
+  return(list(metric = "recall", value = err))
+}
+
+# https://en.wikipedia.org/wiki/Precision_and_recall
+eval_balaccu <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+  prediction <- as.numeric(preds > 0.5)
+  tp <- sum(labels == 1 & prediction == 1)
+  fp <- sum(ifelse((labels == 0 & prediction == 1), 1, 0))
+  fn <- sum(ifelse((labels == 1 & prediction == 0), 1, 0))
+  tn <- sum(ifelse((labels == 0 & prediction == 0), 1, 0))
+  tpr <- tp/(tp+fn)
+  tnr <- tn/(tn+fp)
+  err <- (tpr + tnr) / 2
+  return(list(metric = "balanced_accuracy", value = err))
+}
+
+
+f1score_eval <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+print(1)
+  e_TP <- sum( (labels==1) & (preds >= 0.5) )
+  print(2)
+  e_FP <- sum( (labels==0) & (preds >= 0.5) )
+  e_FN <- sum( (labels==1) & (preds < 0.5) )
+  e_TN <- sum( (labels==0) & (preds < 0.5) )
+  print(3)
+  e_precision <- e_TP / (e_TP+e_FP)
+  e_recall <- e_TP / (e_TP+e_FN)
+  print(e_recall)
+  e_f1 <- 2*(e_precision*e_recall)/(e_precision+e_recall)
+  print(e_f1)
+  return(list(metric = "f1-score", value = e_f1))
+}
+
+watchlist <- list(train=dtrain, test=dtest)
+
+params <- list(booster = "gbtree",
+               objective = "binary:logistic",
+               eta=0.1,
+               gamma=0,
+               max_depth=6,
+               min_child_weight=1,
+               subsample=1,
+               colsample_bytree=1,
+               tree_method = "hist")
+
+xgbcv <- xgb.cv( params = params, data = dtrain, nrounds = 300, nfold = 5, showsd = T, stratified = T, print_every_n = 10, early_stopping_rounds = 10, maximize = T, eval_metric = eval_balaccu)
+
+xgbcv$best_iteration
+min(xgbcv$evaluation_log$test_error_mean)
+# or depending of the eval metric (auc or recall)
+min(xgbcv$evaluation_log$test_recall_mean)
+
+
+mod_xgb.smote <- xgb.train (params = params, data = dtrain, nrounds = 227, watchlist = list(val=dtest, train=dtrain), print_every_n = 10, eval_metric = eval_balaccu)
+
+preds <- predict(mod_xgb.smote, testdf_mx)
+
+# convert prediction's probability to class 0 or 1
+prediction <- as.numeric(preds > 0.5)
+
+err <- mean(as.numeric(preds > 0.5) != testdf$Class)
+print(paste("test-error=", err))
+
+importance_matrix <- xgb.importance(names(traindf[,-30]), model = mod_xgb.smote)
+xgb.plot.importance(importance_matrix)
+# or
+mat <- xgb.importance (feature_names = colnames(dtrain),model = mod_xgb.smote)
+xgb.plot.importance (importance_matrix = mat[1:30]) 
+
+# Accuracy 
+sum(testdf$Class == prediction) / NROW(testdf$Class)
+
+result <- testdf
+result$pred <- prediction
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+
+model_comp <- add_model(cf, model_comp, "xgboost", "SMOTE")
+final_decision <- bind_cols(final_decision, xgboost_smote = result$pred)
+```
+
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
+
+```{r}
+library(mlr)
+
+smote_sampling <- smote_sampling.save
+
+trainTask <- makeClassifTask(data = smote_sampling[,-32], target = "Class", positive = 1)
+testTask <- makeClassifTask(data = testdf, target = "Class")
+
+set.seed(4567)
+# Create an xgboost learner that is classification based and outputs
+# labels (as opposed to probabilities)
+xgb_learner <- makeLearner(
+  "classif.xgboost",
+  predict.type = "response",
+  par.vals = list(
+    objective = "binary:logistic",
+    eval_metric = eval_balaccu,
+    #eval_metric = "error",
+    nrounds = 200
+  )
+)
+
+# Create a model
+xgb_model <- train(xgb_learner, task = trainTask)
+preds <- predict(xgb_model, testTask)
+
+result <- testdf
+result$pred <- as.factor(as.character(as.numeric(preds$data$response)-1))
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+
+##########################################
+## Now with hyperparameter tuning.
+##########################################
+
+# To see all the parameters of the xgboost classifier
+getParamSet("classif.xgboost")
+
+
+xgb_params <- makeParamSet(
+  # The number of trees in the model (each one built sequentially)
+  makeIntegerParam("nrounds", lower = 100, upper = 500),
+  # number of splits in each tree
+  makeIntegerParam("max_depth", lower = 1, upper = 10),
+  # "shrinkage" - prevents overfitting
+  makeNumericParam("eta", lower = .1, upper = .5),
+  # L2 regularization - prevents overfitting
+  makeNumericParam("lambda", lower = -1, upper = 0, trafo = function(x) 10^x)
+)
+
+control <- makeTuneControlRandom(maxit = 1)
+
+# Create a description of the resampling plan
+resample_desc <- makeResampleDesc("CV", iters = 4)
+
+
+tuned_params <- tuneParams(
+  learner = xgb_learner,
+  task = trainTask,
+  resampling = resample_desc,
+  par.set = xgb_params,
+  control = control
+)
+
+# Create a new model using tuned hyperparameters
+xgb_tuned_learner <- setHyperPars(
+  learner = xgb_learner,
+  par.vals = tuned_params$x
+)
+
+set.seed(4567)
+# Re-train parameters using tuned hyperparameters (and full training set)
+xgb_model <- train(xgb_tuned_learner, trainTask)
+
+preds <- predict(xgb_model, testTask)
+
+result <- testdf
+result$pred <- preds$data$response
+
+cf <- confMatrix(result$pred, result$Class)
+cf$plot
+cf$metrics
+cf$matrix
+
+model_comp <- add_model(cf, model_comp, "xgboost_hyp", "SMOTE")
+final_decision <- bind_cols(final_decision, xgboost_smote_hyp = result$pred)
+
+getParamSet("classif.xgboost")
+
+# there's not a big difference, but if i set the parameters from tuned_param manually, then it changes more.
+```
+
+The recall is `r cf$metrics['Recall']` and the the precision is `r cf$metrics['Precision']`
+
+```{r}
+model_comp
+```
+
 
